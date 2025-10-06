@@ -1,10 +1,3 @@
-import { ConnectButton } from "@rainbow-me/rainbowkit";
-
 export default function Home() {
-  return (
-    <div>
-      <ConnectButton />
-      <h1>HELLO WORLD</h1>
-    </div>
-  );
+  return <div className="min-h-screen bg-gray-50"></div>;
 }
