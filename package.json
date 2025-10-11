@@ -3,8 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "anvil": "anvil --load-state tsender-deployed.json",
+    "anvil": "anvil --load-state batchsend.json",
     "dev": "next dev --turbopack",
+    "test": "vitest",
     "build": "next build --turbopack",
     "start": "next start"
   },
@@ -24,8 +25,11 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "jsdom": "^27.0.0",
     "tailwindcss": "^4",
     "ts-node": "^10.9.2",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vite-tsconfig-paths": "^5.1.4",
+    "vitest": "^3.2.4"
   }
 }
