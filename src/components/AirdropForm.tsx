@@ -1,19 +1,77 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { chainsToTSender, tsenderAbi, erc20Abi } from "@/constants";
-import { useChainId, useConfig, useAccount, useReadContract } from "wagmi";
-import { readContract } from "@wagmi/core";
+import {
+  useChainId,
+  useConfig,
+  useAccount,
+  useReadContract,
+  useWriteContract,
+} from "wagmi";
+import { readContract, waitForTransactionReceipt } from "@wagmi/core";
 import { calculateTotal, parseAmounts, parseRecipients } from "@/utils";
 import { formatTokens, formatWei } from "@/utils";
+import { toast } from "sonner";
 
 export default function AirdropForm() {
-  const [tokenAddress, setTokenAddress] = useState("");
-  const [recipients, setRecipients] = useState("");
-  const [amounts, setAmounts] = useState("");
+  // constants for localStorage keys
+  const STORAGE_KEYS = {
+    TOKEN_ADDRESS: "airdrop_token_address",
+    RECIPIENTS: "airdrop_recipients",
+    AMOUNTS: "airdrop_amounts",
+  };
+
+  const [tokenAddress, setTokenAddress] = useState(() => {
+    // Only run on client side (not during SSR)
+    if (typeof window !== "undefined") {
+      return localStorage.getItem(STORAGE_KEYS.TOKEN_ADDRESS) || "";
+    }
+    return "";
+  });
+
+  const [recipients, setRecipients] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem(STORAGE_KEYS.RECIPIENTS) || "";
+    }
+    return "";
+  });
+
+  const [amounts, setAmounts] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem(STORAGE_KEYS.AMOUNTS) || "";
+    }
+    return "";
+  });
+
+  // Track loading states for different operations
+  const [isApproving, setIsApproving] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+
   const chainId = useChainId();
   const config = useConfig();
   const account = useAccount();
   const total = useMemo(() => calculateTotal(amounts), [amounts]);
+
+  const { writeContractAsync } = useWriteContract({});
+
+  // Whenever inputs change, save to localStorage
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem(STORAGE_KEYS.TOKEN_ADDRESS, tokenAddress);
+    }
+  }, [tokenAddress]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem(STORAGE_KEYS.RECIPIENTS, recipients);
+    }
+  }, [recipients]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem(STORAGE_KEYS.AMOUNTS, amounts);
+    }
+  }, [amounts]);
 
   // Read token name from contract
   const { data: tokenName } = useReadContract({
@@ -53,7 +111,9 @@ export default function AirdropForm() {
     tSenderAddress: string | null
   ): Promise<number> {
     if (!tSenderAddress) {
-      alert("tSenderAddress is null");
+      toast.error("Transaction failed", {
+        description: "BatchSend contract address not found",
+      });
       return 0;
     }
 
@@ -74,50 +134,168 @@ export default function AirdropForm() {
     const amountList = parseAmounts(amounts);
 
     if (!tokenAddress || !tokenAddress.startsWith("0x")) {
-      alert("Please enter a valid token address");
+       toast.error("Invalid token address", {
+         description: "Please enter a valid token contract address",
+       });
       return;
     }
 
     if (recipientList.length === 0) {
-      alert("Please enter at least one recipient address");
+      toast.error("No recipients", {
+        description: "Please enter at least one recipient address",
+      });
       return;
     }
 
     if (amountList.length === 0) {
-      alert("Please enter at least one amount");
+      toast.error("No amounts", {
+        description: "Please enter at least one amount",
+      });
       return;
     }
 
     if (recipientList.length !== amountList.length) {
-      alert("Number of recipients must match number of amounts");
+      toast.error("Mismatched inputs", {
+        description: "Number of recipients must match number of amounts",
+      });
       return;
     }
 
-    // Check approval
     const tSenderAddress = chainsToTSender[chainId]?.["tsender"];
     if (!tSenderAddress) {
-      alert("BatchSend contract not deployed on this network");
+      toast.error("Unsupported network", {
+        description: "BatchSend contract not deployed on this network",
+      });
       return;
     }
 
-    const approvedAmount = await getApprovedAmount(tSenderAddress);
-    console.log("Approved amount:", approvedAmount.toString());
-    console.log("Total needed:", total.toString());
+    try {
+      // Check approval
+      const approvedAmount = await getApprovedAmount(tSenderAddress);
 
-    if (approvedAmount === 0 || approvedAmount < total) {
-      alert(
-        `Insufficient approval. Approved: ${formatWei(
-          approvedAmount.toString()
-        )}, Needed: ${formatWei(total.toString())}`
-      );
-      return;
+      if (approvedAmount < total) {
+        // Show spinner while approving tokens
+        setIsApproving(true); // Start approval spinner
+
+        // Show loading toast for approval
+        const approvalToast = toast.loading("Approving tokens...", {
+          description: "Confirm the transaction in your wallet",
+        });
+
+        const approvalHash = await writeContractAsync({
+          abi: erc20Abi,
+          address: tokenAddress as `0x${string}`,
+          functionName: "approve",
+          args: [tSenderAddress as `0x${string}`, BigInt(total)],
+        });
+
+        // Update toast to show confirmation waiting
+        toast.loading("Waiting for confirmation...", {
+          id: approvalToast,
+          description: "Transaction is being confirmed on the blockchain",
+        });
+
+        const approvalReceipt = await waitForTransactionReceipt(config, {
+          hash: approvalHash,
+        });
+
+        // Success for approval
+        toast.success("Tokens approved!", {
+          id: approvalToast,
+          description: "Your tokens are now ready to be sent",
+        });
+
+        setIsApproving(false);
+      }
+
+      // Show loading toast for sending
+      const sendToast = toast.loading("Sending tokens...", {
+        description: `Sending to ${recipientList.length} recipients`,
+      });
+
+      // Show spinner while sending tokens
+      setIsSending(true);
+
+      const sendHash = await writeContractAsync({
+        abi: tsenderAbi,
+        address: tSenderAddress as `0x${string}`,
+        functionName: "airdropERC20",
+        args: [
+          tokenAddress as `0x${string}`,
+          recipientList,
+          amountList,
+          BigInt(total),
+        ],
+      });
+
+      // Update toast to show confirmation waiting
+      toast.loading("Confirming transaction...", {
+        id: sendToast,
+        description: "Waiting for blockchain confirmation",
+      });
+
+      const sendReceipt = await waitForTransactionReceipt(config, {
+        hash: sendHash,
+      });
+
+      console.log("Tokens sent successfully:", sendReceipt);
+      setIsSending(false); // Stop sending spinner
+
+      // Success toast with transaction details
+      toast.success("Airdrop completed! 🎉", {
+        id: sendToast,
+        description: `Successfully sent to ${recipientList.length} recipients`,
+        action: {
+          label: "View on Explorer",
+          onClick: () => {
+            // You can add blockchain explorer URL here
+            const explorerUrl = `https://etherscan.io/tx/${sendHash}`;
+            window.open(explorerUrl, "_blank");
+          },
+        },
+        duration: 10000, // Show for 10 seconds since it has an action
+      });
+
+      // Clear form and localStorage
+      setTokenAddress("");
+      setRecipients("");
+      setAmounts("");
+      localStorage.removeItem(STORAGE_KEYS.TOKEN_ADDRESS);
+      localStorage.removeItem(STORAGE_KEYS.RECIPIENTS);
+      localStorage.removeItem(STORAGE_KEYS.AMOUNTS);
+
+    } catch (error) {
+      console.error("Transaction error:", error);
+
+      // Error toast
+      toast.error("Transaction failed", {
+        description:
+          error instanceof Error ? error.message : "Please try again",
+      });
+
+
+      // Reset all loading states on error
+      setIsApproving(false);
+      setIsSending(false);
     }
-
-    // TODO: Execute batch send transaction
-    console.log("Sending tokens...");
-    console.log("Recipients:", recipientList);
-    console.log("Amounts:", amountList);
   }
+
+  // Combine both loading states for UI
+  const isLoading = isApproving || isSending;
+
+  // Show different messages based on transaction stage
+  const getLoadingMessage: any = () => {
+    if (isApproving) return "Approving tokens...";
+    if (isSending) return "Sending tokens...";
+    return "";
+  };
+
+  // Get button text based on state
+  const getButtonText = () => {
+    if (isLoading) return getLoadingMessage();
+    if (!account.address) return "Connect Wallet";
+    return "Send Tokens";
+  };
 
   return (
     <div className="min-h-screen bg-gray-100 py-12 px-4 sm:px-6 lg:px-8">
@@ -218,10 +396,13 @@ export default function AirdropForm() {
           {/* Send Button */}
           <button
             onClick={handleSubmit}
-            disabled={!account.address || total === 0}
-            className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors duration-200"
+            disabled={!account.address || total === 0 || isLoading}
+            className="w-full py-3 px-4 bg-blue-600 text-white font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-200 flex items-center justify-center space-x-2 min-h-[48px] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700"
           >
-            {!account.address ? "Connect Wallet" : "Send Tokens"}
+            {isLoading && (
+              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+            )}
+            <span>{getButtonText()}</span>
           </button>
         </div>
 
