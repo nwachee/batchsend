@@ -1,11 +1,11 @@
 "use client";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, use } from "react";
 import { chainsToTSender, tsenderAbi, erc20Abi } from "@/constants";
 import {
   useChainId,
   useConfig,
   useAccount,
-  useReadContract,
+  useReadContracts,
   useWriteContract,
 } from "wagmi";
 import { readContract, waitForTransactionReceipt } from "@wagmi/core";
@@ -73,40 +73,35 @@ export default function AirdropForm() {
     }
   }, [amounts]);
 
-  // Read token name from contract
-  const { data: tokenName } = useReadContract({
-    address: tokenAddress as `0x${string}`,
-    abi: erc20Abi,
-    functionName: "name",
-    query: {
-      enabled: !!tokenAddress && tokenAddress.startsWith("0x"),
-    },
-  });
-
-  // Read token symbol from contract
-  const { data: tokenSymbol } = useReadContract({
-    address: tokenAddress as `0x${string}`,
-    abi: erc20Abi,
-    functionName: "symbol",
-    query: {
-      enabled: !!tokenAddress && tokenAddress.startsWith("0x"),
-    },
-  });
-
-  // Read token decimals from contract
-  const { data: tokenDecimals } = useReadContract({
-    address: tokenAddress as `0x${string}`,
-    abi: erc20Abi,
-    functionName: "decimals",
-    query: {
-      enabled: !!tokenAddress && tokenAddress.startsWith("0x"),
-    },
+  // Fetch token details using useReadContracts
+  const { data: tokenData } = useReadContracts({
+    contracts: [
+      {
+        address: tokenAddress as `0x${string}`,
+        abi: erc20Abi,
+        functionName: "name",
+      },
+      {
+        address: tokenAddress as `0x${string}`,
+        abi: erc20Abi,
+        functionName: "symbol",
+      },
+      {
+        address: tokenAddress as `0x${string}`,
+        abi: erc20Abi,
+        functionName: "decimals",
+      },
+    ],
   });
 
   // Display token info
+  const tokenName = tokenData?.[0]?.result as string;
+  const tokenSymbol = tokenData?.[1]?.result as string;
+  const tokenDecimals = tokenData?.[2]?.result as number | undefined;
   const displayTokenName =
-    tokenName && tokenSymbol ? `${tokenName} (${tokenSymbol})` : "—";
+    tokenName && tokenSymbol ? `${tokenName} (${tokenSymbol})` : "—";;
 
+  // HELPER: GET APPROVED AMOUNT
   async function getApprovedAmount(
     tSenderAddress: string | null
   ): Promise<number> {
@@ -129,14 +124,14 @@ export default function AirdropForm() {
   }
 
   async function handleSubmit() {
-    // Validate inputs
     const recipientList = parseRecipients(recipients);
     const amountList = parseAmounts(amounts);
 
+    // Validate inputs
     if (!tokenAddress || !tokenAddress.startsWith("0x")) {
-       toast.error("Invalid token address", {
-         description: "Please enter a valid token contract address",
-       });
+      toast.error("Invalid token address", {
+        description: "Please enter a valid token contract address",
+      });
       return;
     }
 
@@ -174,13 +169,10 @@ export default function AirdropForm() {
       const approvedAmount = await getApprovedAmount(tSenderAddress);
 
       if (approvedAmount < total) {
-        // Show spinner while approving tokens
-        setIsApproving(true); // Start approval spinner
+        // Start and show spinner while approving tokens
+        setIsApproving(true);
 
-        // Show loading toast for approval
-        const approvalToast = toast.loading("Approving tokens...", {
-          description: "Confirm the transaction in your wallet",
-        });
+        console.log("Approving tokens...");
 
         const approvalHash = await writeContractAsync({
           abi: erc20Abi,
@@ -189,29 +181,20 @@ export default function AirdropForm() {
           args: [tSenderAddress as `0x${string}`, BigInt(total)],
         });
 
-        // Update toast to show confirmation waiting
-        toast.loading("Waiting for confirmation...", {
-          id: approvalToast,
-          description: "Transaction is being confirmed on the blockchain",
-        });
+        // Update to show confirmation waiting
+        console.log("Waiting for confirmation...");
 
         const approvalReceipt = await waitForTransactionReceipt(config, {
           hash: approvalHash,
         });
 
         // Success for approval
-        toast.success("Tokens approved!", {
-          id: approvalToast,
-          description: "Your tokens are now ready to be sent",
-        });
+        console.log("Tokens approved!", approvalReceipt);
 
         setIsApproving(false);
       }
 
-      // Show loading toast for sending
-      const sendToast = toast.loading("Sending tokens...", {
-        description: `Sending to ${recipientList.length} recipients`,
-      });
+      console.log("Sending tokens...");
 
       // Show spinner while sending tokens
       setIsSending(true);
@@ -228,11 +211,7 @@ export default function AirdropForm() {
         ],
       });
 
-      // Update toast to show confirmation waiting
-      toast.loading("Confirming transaction...", {
-        id: sendToast,
-        description: "Waiting for blockchain confirmation",
-      });
+      console.log("Confirming transaction...");
 
       const sendReceipt = await waitForTransactionReceipt(config, {
         hash: sendHash,
@@ -243,7 +222,6 @@ export default function AirdropForm() {
 
       // Success toast with transaction details
       toast.success("Airdrop completed! 🎉", {
-        id: sendToast,
         description: `Successfully sent to ${recipientList.length} recipients`,
         action: {
           label: "View on Explorer",
@@ -263,7 +241,6 @@ export default function AirdropForm() {
       localStorage.removeItem(STORAGE_KEYS.TOKEN_ADDRESS);
       localStorage.removeItem(STORAGE_KEYS.RECIPIENTS);
       localStorage.removeItem(STORAGE_KEYS.AMOUNTS);
-
     } catch (error) {
       console.error("Transaction error:", error);
 
@@ -272,7 +249,6 @@ export default function AirdropForm() {
         description:
           error instanceof Error ? error.message : "Please try again",
       });
-
 
       // Reset all loading states on error
       setIsApproving(false);
@@ -379,7 +355,9 @@ export default function AirdropForm() {
                 <div className="mt-1 p-2 bg-white border border-gray-300 rounded text-black font-mono">
                   {formatTokens(
                     total.toString(),
-                    tokenDecimals ? Number(tokenDecimals) : 18
+                    tokenDecimals
+                      ? Number(tokenDecimals)
+                      : 18
                   )}
                 </div>
               </div>

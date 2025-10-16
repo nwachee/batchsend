@@ -15,7 +15,7 @@ export default function RootLayout(props: { children: ReactNode }) {
         <Providers>
           <Header /> {props.children}
         </Providers>
-        <Toaster />
+        <Toaster position="top-right" richColors closeButton />
       </body>
     </html>
   );
