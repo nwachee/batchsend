@@ -23,11 +23,12 @@
     }
   },
   "include": [
-    "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
+    ".fleek/types/**/*.ts",
     ".next/types/**/*.ts",
-    "vitest.config.mts"
+    "next-env.d.ts",
+    "out/types/**/*.ts"
   ],
   "exclude": ["node_modules"]
 }
