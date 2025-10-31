@@ -48,4 +48,5 @@ node_modules/
 /playwright/.cache/
 /playwright/.auth/
 
+# Synpress
 .cache-synpress/

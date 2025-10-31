@@ -7,7 +7,13 @@
     "dev": "next dev --turbopack",
     "test": "vitest",
     "build": "next build --turbopack",
-    "start": "next start"
+    "start": "next start",
+    "coverage": "pnpm vitest run --coverage",
+    "test:unit": "vitest",
+    "test:cache": "pnpm synpress",
+    "test:e2e": "pnpm exec playwright test",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\""
   },
   "dependencies": {
     "@rainbow-me/rainbowkit": "^2.2.8",
