@@ -3,6 +3,7 @@ import "./globals.css";
 import { ReactNode } from "react";
 import { Providers } from "./providers";
 import Header from "@/components/Header";
+import { Toaster } from "@/components/ui/sonner"
 export const metadata: Metadata = {
   title: "BatchSend",
 };
@@ -14,6 +15,7 @@ export default function RootLayout(props: { children: ReactNode }) {
         <Providers>
           <Header /> {props.children}
         </Providers>
+        <Toaster position="top-right" richColors closeButton />
       </body>
     </html>
   );

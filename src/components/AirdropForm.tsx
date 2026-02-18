@@ -1,22 +1,114 @@
 "use client";
-import { useState } from "react";
+import { useState, useMemo, useEffect, use } from "react";
 import { chainsToTSender, tsenderAbi, erc20Abi } from "@/constants";
-import { useChainId, useConfig, useAccount } from "wagmi";
-import { readContract } from "@wagmi/core";
+import {
+  useChainId,
+  useConfig,
+  useAccount,
+  useReadContracts,
+  useWriteContract,
+} from "wagmi";
+import { readContract, waitForTransactionReceipt } from "@wagmi/core";
+import { calculateTotal, parseAmounts, parseRecipients } from "@/utils";
+import { formatTokens, formatWei } from "@/utils";
+import { toast } from "sonner";
 
 export default function AirdropForm() {
-  const [tokenAddress, setTokenAddress] = useState("");
-  const [recipients, setRecipients] = useState("");
-  const [amounts, setAmounts] = useState("");
+  // constants for localStorage keys
+  const STORAGE_KEYS = {
+    TOKEN_ADDRESS: "airdrop_token_address",
+    RECIPIENTS: "airdrop_recipients",
+    AMOUNTS: "airdrop_amounts",
+  };
+
+  const [tokenAddress, setTokenAddress] = useState(() => {
+    // Only run on client side (not during SSR)
+    if (typeof window !== "undefined") {
+      return localStorage.getItem(STORAGE_KEYS.TOKEN_ADDRESS) || "";
+    }
+    return "";
+  });
+
+  const [recipients, setRecipients] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem(STORAGE_KEYS.RECIPIENTS) || "";
+    }
+    return "";
+  });
+
+  const [amounts, setAmounts] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem(STORAGE_KEYS.AMOUNTS) || "";
+    }
+    return "";
+  });
+
+  // Track loading states for different operations
+  const [isApproving, setIsApproving] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+
   const chainId = useChainId();
   const config = useConfig();
   const account = useAccount();
+  const total = useMemo(() => calculateTotal(amounts), [amounts]);
 
+  const { writeContractAsync } = useWriteContract({});
+
+  // Whenever inputs change, save to localStorage
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem(STORAGE_KEYS.TOKEN_ADDRESS, tokenAddress);
+    }
+  }, [tokenAddress]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem(STORAGE_KEYS.RECIPIENTS, recipients);
+    }
+  }, [recipients]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem(STORAGE_KEYS.AMOUNTS, amounts);
+    }
+  }, [amounts]);
+
+  // Fetch token details using useReadContracts
+  const { data: tokenData } = useReadContracts({
+    contracts: [
+      {
+        address: tokenAddress as `0x${string}`,
+        abi: erc20Abi,
+        functionName: "name",
+      },
+      {
+        address: tokenAddress as `0x${string}`,
+        abi: erc20Abi,
+        functionName: "symbol",
+      },
+      {
+        address: tokenAddress as `0x${string}`,
+        abi: erc20Abi,
+        functionName: "decimals",
+      },
+    ],
+  });
+
+  // Display token info
+  const tokenName = tokenData?.[0]?.result as string;
+  const tokenSymbol = tokenData?.[1]?.result as string;
+  const tokenDecimals = tokenData?.[2]?.result as number | undefined;
+  const displayTokenName =
+    tokenName && tokenSymbol ? `${tokenName} (${tokenSymbol})` : "—";;
+
+  // HELPER: GET APPROVED AMOUNT
   async function getApprovedAmount(
     tSenderAddress: string | null
   ): Promise<number> {
     if (!tSenderAddress) {
-      alert("tSenderAddress is null");
+      toast.error("Transaction failed", {
+        description: "BatchSend contract address not found",
+      });
       return 0;
     }
 
@@ -32,11 +124,154 @@ export default function AirdropForm() {
   }
 
   async function handleSubmit() {
-    // Placeholder for sending tokens logic
-    const tSenderAddress = chainsToTSender[chainId]["tsender"];
-    const approvedAmount = await getApprovedAmount(tSenderAddress);
-    console.log("Approved amount:", approvedAmount);
+    const recipientList = parseRecipients(recipients);
+    const amountList = parseAmounts(amounts);
+
+    // Validate inputs
+    if (!tokenAddress || !tokenAddress.startsWith("0x")) {
+      toast.error("Invalid token address", {
+        description: "Please enter a valid token contract address",
+      });
+      return;
+    }
+
+    if (recipientList.length === 0) {
+      toast.error("No recipients", {
+        description: "Please enter at least one recipient address",
+      });
+      return;
+    }
+
+    if (amountList.length === 0) {
+      toast.error("No amounts", {
+        description: "Please enter at least one amount",
+      });
+      return;
+    }
+
+    if (recipientList.length !== amountList.length) {
+      toast.error("Mismatched inputs", {
+        description: "Number of recipients must match number of amounts",
+      });
+      return;
+    }
+
+    const tSenderAddress = chainsToTSender[chainId]?.["tsender"];
+    if (!tSenderAddress) {
+      toast.error("Unsupported network", {
+        description: "BatchSend contract not deployed on this network",
+      });
+      return;
+    }
+
+    try {
+      // Check approval
+      const approvedAmount = await getApprovedAmount(tSenderAddress);
+
+      if (approvedAmount < total) {
+        // Start and show spinner while approving tokens
+        setIsApproving(true);
+
+        console.log("Approving tokens...");
+
+        const approvalHash = await writeContractAsync({
+          abi: erc20Abi,
+          address: tokenAddress as `0x${string}`,
+          functionName: "approve",
+          args: [tSenderAddress as `0x${string}`, BigInt(total)],
+        });
+
+        // Update to show confirmation waiting
+        console.log("Waiting for confirmation...");
+
+        const approvalReceipt = await waitForTransactionReceipt(config, {
+          hash: approvalHash,
+        });
+
+        // Success for approval
+        console.log("Tokens approved!", approvalReceipt);
+
+        setIsApproving(false);
+      }
+
+      console.log("Sending tokens...");
+
+      // Show spinner while sending tokens
+      setIsSending(true);
+
+      const sendHash = await writeContractAsync({
+        abi: tsenderAbi,
+        address: tSenderAddress as `0x${string}`,
+        functionName: "airdropERC20",
+        args: [
+          tokenAddress as `0x${string}`,
+          recipientList,
+          amountList,
+          BigInt(total),
+        ],
+      });
+
+      console.log("Confirming transaction...");
+
+      const sendReceipt = await waitForTransactionReceipt(config, {
+        hash: sendHash,
+      });
+
+      console.log("Tokens sent successfully:", sendReceipt);
+      setIsSending(false); // Stop sending spinner
+
+      // Success toast with transaction details
+      toast.success("Airdrop completed! 🎉", {
+        description: `Successfully sent to ${recipientList.length} recipients`,
+        action: {
+          label: "View on Explorer",
+          onClick: () => {
+            // You can add blockchain explorer URL here
+            const explorerUrl = `https://etherscan.io/tx/${sendHash}`;
+            window.open(explorerUrl, "_blank");
+          },
+        },
+        duration: 10000, // Show for 10 seconds since it has an action
+      });
+
+      // Clear form and localStorage
+      setTokenAddress("");
+      setRecipients("");
+      setAmounts("");
+      localStorage.removeItem(STORAGE_KEYS.TOKEN_ADDRESS);
+      localStorage.removeItem(STORAGE_KEYS.RECIPIENTS);
+      localStorage.removeItem(STORAGE_KEYS.AMOUNTS);
+    } catch (error) {
+      console.error("Transaction error:", error);
+
+      // Error toast
+      toast.error("Transaction failed", {
+        description:
+          error instanceof Error ? error.message : "Please try again",
+      });
+
+      // Reset all loading states on error
+      setIsApproving(false);
+      setIsSending(false);
+    }
   }
+
+  // Combine both loading states for UI
+  const isLoading = isApproving || isSending;
+
+  // Show different messages based on transaction stage
+  const getLoadingMessage: any = () => {
+    if (isApproving) return "Approving tokens...";
+    if (isSending) return "Sending tokens...";
+    return "";
+  };
+
+  // Get button text based on state
+  const getButtonText = () => {
+    if (isLoading) return getLoadingMessage();
+    if (!account.address) return "Connect Wallet";
+    return "Send Tokens";
+  };
 
   return (
     <div className="min-h-screen bg-gray-100 py-12 px-4 sm:px-6 lg:px-8">
@@ -64,10 +299,13 @@ export default function AirdropForm() {
             <textarea
               value={recipients}
               onChange={(e) => setRecipients(e.target.value)}
-              placeholder="0x123..., 0x456..."
+              placeholder="0x123..., 0x456...&#10;0x789..."
               rows={4}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-vertical text-black"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-vertical text-black font-mono text-sm"
             />
+            <p className="text-xs text-gray-500">
+              {parseRecipients(recipients).length} recipient(s)
+            </p>
           </div>
 
           {/* Amounts Input */}
@@ -78,10 +316,13 @@ export default function AirdropForm() {
             <textarea
               value={amounts}
               onChange={(e) => setAmounts(e.target.value)}
-              placeholder="100, 200, 300..."
+              placeholder="100000000000000000, 200000000000000000&#10;300000000000000000"
               rows={4}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-vertical text-black"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-vertical text-black font-mono text-sm"
             />
+            <p className="text-xs text-gray-500">
+              {parseAmounts(amounts).length} amount(s)
+            </p>
           </div>
 
           {/* Transaction Details */}
@@ -94,21 +335,37 @@ export default function AirdropForm() {
               <div>
                 <span className="font-medium text-black">Token Name:</span>
                 <div className="mt-1 p-2 bg-white border border-gray-300 rounded text-black">
-                  —
+                  {displayTokenName}
                 </div>
               </div>
 
               <div>
-                <span className="font-medium text-black">Amount (wei):</span>
-                <div className="mt-1 p-2 bg-white border border-gray-300 rounded text-black">
-                  0
+                <span className="font-medium text-black">
+                  Total Amount (wei):
+                </span>
+                <div className="mt-1 p-2 bg-white border border-gray-300 rounded text-black font-mono">
+                  {formatWei(total.toString())}
                 </div>
               </div>
 
               <div>
-                <span className="font-medium text-black">Amount (tokens):</span>
+                <span className="font-medium text-black">
+                  Total Amount (tokens):
+                </span>
+                <div className="mt-1 p-2 bg-white border border-gray-300 rounded text-black font-mono">
+                  {formatTokens(
+                    total.toString(),
+                    tokenDecimals
+                      ? Number(tokenDecimals)
+                      : 18
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <span className="font-medium text-black">Recipients:</span>
                 <div className="mt-1 p-2 bg-white border border-gray-300 rounded text-black">
-                  0.00
+                  {parseRecipients(recipients).length}
                 </div>
               </div>
             </div>
@@ -117,15 +374,19 @@ export default function AirdropForm() {
           {/* Send Button */}
           <button
             onClick={handleSubmit}
-            className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors duration-200"
+            disabled={!account.address || total === 0 || isLoading}
+            className="w-full py-3 px-4 bg-blue-600 text-white font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-200 flex items-center justify-center space-x-2 min-h-[48px] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700"
           >
-            Send Tokens
+            {isLoading && (
+              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+            )}
+            <span>{getButtonText()}</span>
           </button>
         </div>
 
         {/* Additional Info */}
         <div className="mt-8 text-center text-sm text-gray-500">
-          <p>Supported networks: Ethereum, Polygon, Arbitrum, Optimism</p>
+          <p>Supports all EVM chains (Ethereum, BSC, Polygon, and more)</p>
         </div>
       </div>
     </div>
