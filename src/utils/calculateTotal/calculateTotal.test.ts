@@ -117,21 +117,21 @@ describe("parseAmounts", () => {
 
   it("should parse comma-separated amounts", () => {
     const result = parseAmounts("100, 200, 300");
-    expect(result).toEqual([100, 200, 300]);
+    expect(result).toEqual([100n, 200n, 300n]);
   });
 
   it("should parse newline-separated amounts", () => {
     const result = parseAmounts("100\n200\n300");
-    expect(result).toEqual([100, 200, 300]);
+    expect(result).toEqual([100n, 200n, 300n]);
   });
 
   it("should filter out zeros", () => {
     const result = parseAmounts("100, 0, 200");
-    expect(result).toEqual([100, 200]);
+    expect(result).toEqual([100n, 200n]);
   });
 
   it("should handle large wei amounts", () => {
     const result = parseAmounts("1000000000000000000, 2000000000000000000");
-    expect(result).toEqual([1000000000000000000, 2000000000000000000]);
+    expect(result).toEqual([1000000000000000000n, 2000000000000000000n]);
   });
 });

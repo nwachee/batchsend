@@ -30,17 +30,23 @@ export function parseRecipients(recipientsInput: string): string[] {
 /**
  * Parse amounts into array of bigints
  */
-export function parseAmounts(amountsInput: string): number[] {
+export function parseAmounts(amountsInput: string): bigint[] {
   if (!amountsInput || !amountsInput.trim()) return [];
 
   return amountsInput
-    .split(/[,\n]+/)
+    .split(/[\n,]+/)
     .map((str) => str.trim())
     .filter((str) => str.length > 0)
     .map((amountStr) => {
-      const cleanAmount = amountStr.replace(/[^\d.]/g, "");
-      const parsed = parseFloat(cleanAmount);
-      return isNaN(parsed) ? 0 : parsed;
+      const cleaned = amountStr.trim();
+      if (!/^[0-9]+$/.test(cleaned)) {
+        return 0n;
+      }
+      try {
+        return BigInt(cleaned);
+      } catch {
+        return 0n;
+      }
     })
-    .filter((amount) => amount > 0);
+    .filter((amount) => amount > 0n);
 }
