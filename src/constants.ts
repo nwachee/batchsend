@@ -793,54 +793,23 @@ export const erc20Abi = [
 export const tsenderAbi = [
   {
     type: "function",
-    name: "airdropERC20",
+    name: "batchSend",
     inputs: [
-      {
-        name: "tokenAddress",
-        type: "address",
-        internalType: "address",
-      },
-      {
-        name: "recipients",
-        type: "address[]",
-        internalType: "address[]",
-      },
-      {
-        name: "amounts",
-        type: "uint256[]",
-        internalType: "uint256[]",
-      },
-      {
-        name: "totalAmount",
-        type: "uint256",
-        internalType: "uint256",
-      },
+      { name: "token", type: "address", internalType: "address" },
+      { name: "recipients", type: "address[]", internalType: "address[]" },
+      { name: "amounts", type: "uint256[]", internalType: "uint256[]" },
     ],
     outputs: [],
     stateMutability: "nonpayable",
   },
   {
     type: "function",
-    name: "areListsValid",
+    name: "validate",
     inputs: [
-      {
-        name: "recipients",
-        type: "address[]",
-        internalType: "address[]",
-      },
-      {
-        name: "amounts",
-        type: "uint256[]",
-        internalType: "uint256[]",
-      },
+      { name: "recipients", type: "address[]", internalType: "address[]" },
+      { name: "amounts", type: "uint256[]", internalType: "uint256[]" },
     ],
-    outputs: [
-      {
-        name: "",
-        type: "bool",
-        internalType: "bool",
-      },
-    ],
+    outputs: [{ name: "", type: "bool", internalType: "bool" }],
     stateMutability: "pure",
   },
-];
+] as const;

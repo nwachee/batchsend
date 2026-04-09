@@ -8,8 +8,9 @@ import {
   useReadContracts,
   useWriteContract,
 } from "wagmi";
+import { simulateContract } from "@wagmi/core";
 import { readContract, waitForTransactionReceipt } from "@wagmi/core";
-import { calculateTotal, parseAmounts, parseRecipients } from "@/utils";
+import { parseAmounts, parseRecipients } from "@/utils";
 import { formatTokens, formatWei } from "@/utils";
 import { toast } from "sonner";
 
@@ -50,7 +51,10 @@ export default function AirdropForm() {
   const chainId = useChainId();
   const config = useConfig();
   const account = useAccount();
-  const total = useMemo(() => calculateTotal(amounts), [amounts]);
+  const totalAmount = useMemo(
+    () => parseAmounts(amounts).reduce((acc, amount) => acc + amount, 0n),
+    [amounts]
+  );
 
   const { writeContractAsync } = useWriteContract({});
 
@@ -104,12 +108,12 @@ export default function AirdropForm() {
   // HELPER: GET APPROVED AMOUNT
   async function getApprovedAmount(
     tSenderAddress: string | null
-  ): Promise<number> {
+  ): Promise<bigint> {
     if (!tSenderAddress) {
       toast.error("Transaction failed", {
         description: "BatchSend contract address not found",
       });
-      return 0;
+      return 0n;
     }
 
     // read from the chain to see if the user has approved enough tokens
@@ -120,7 +124,7 @@ export default function AirdropForm() {
       args: [account.address, tSenderAddress as `0x${string}`],
     });
 
-    return response as number;
+    return response as bigint;
   }
 
   async function handleSubmit() {
@@ -144,7 +148,7 @@ export default function AirdropForm() {
 
     if (amountList.length === 0) {
       toast.error("No amounts", {
-        description: "Please enter at least one amount",
+        description: "Please enter at least one amount in wei",
       });
       return;
     }
@@ -152,6 +156,13 @@ export default function AirdropForm() {
     if (recipientList.length !== amountList.length) {
       toast.error("Mismatched inputs", {
         description: "Number of recipients must match number of amounts",
+      });
+      return;
+    }
+
+    if (totalAmount === 0n) {
+      toast.error("Invalid total", {
+        description: "Amounts must be positive integer wei values",
       });
       return;
     }
@@ -168,7 +179,7 @@ export default function AirdropForm() {
       // Check approval
       const approvedAmount = await getApprovedAmount(tSenderAddress);
 
-      if (approvedAmount < total) {
+      if (approvedAmount < totalAmount) {
         // Start and show spinner while approving tokens
         setIsApproving(true);
 
@@ -178,7 +189,7 @@ export default function AirdropForm() {
           abi: erc20Abi,
           address: tokenAddress as `0x${string}`,
           functionName: "approve",
-          args: [tSenderAddress as `0x${string}`, BigInt(total)],
+          args: [tSenderAddress as `0x${string}`, totalAmount],
         });
 
         // Update to show confirmation waiting
@@ -202,12 +213,11 @@ export default function AirdropForm() {
       const sendHash = await writeContractAsync({
         abi: tsenderAbi,
         address: tSenderAddress as `0x${string}`,
-        functionName: "airdropERC20",
+        functionName: "batchSend",
         args: [
           tokenAddress as `0x${string}`,
-          recipientList,
-          amountList,
-          BigInt(total),
+          recipientList as `0x${string}`[],
+          amountList
         ],
       });
 
@@ -344,7 +354,7 @@ export default function AirdropForm() {
                   Total Amount (wei):
                 </span>
                 <div className="mt-1 p-2 bg-white border border-gray-300 rounded text-black font-mono">
-                  {formatWei(total.toString())}
+                  {formatWei(totalAmount.toString())}
                 </div>
               </div>
 
@@ -354,7 +364,7 @@ export default function AirdropForm() {
                 </span>
                 <div className="mt-1 p-2 bg-white border border-gray-300 rounded text-black font-mono">
                   {formatTokens(
-                    total.toString(),
+                    totalAmount.toString(),
                     tokenDecimals
                       ? Number(tokenDecimals)
                       : 18
@@ -374,7 +384,7 @@ export default function AirdropForm() {
           {/* Send Button */}
           <button
             onClick={handleSubmit}
-            disabled={!account.address || total === 0 || isLoading}
+            disabled={!account.address || totalAmount === 0n || isLoading}
             className="w-full py-3 px-4 bg-blue-600 text-white font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-200 flex items-center justify-center space-x-2 min-h-[48px] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700"
           >
             {isLoading && (
