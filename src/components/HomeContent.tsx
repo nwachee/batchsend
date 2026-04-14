@@ -1,8 +1,13 @@
-import AirdropForm from "@/components/AirdropForm"
-export default function HomeContent(){
+import dynamic from "next/dynamic";
+
+const AirdropForm = dynamic(() => import("./AirdropForm"), {
+    ssr: false,
+});
+
+export default function HomeContent() {
     return (
-            <div>
+        <div>
             <AirdropForm />
-            </div>
+        </div>
     );
 }
