@@ -237,7 +237,19 @@ export default function AirdropForm() {
           label: "View on Explorer",
           onClick: () => {
             // You can add blockchain explorer URL here
-            const explorerUrl = `https://etherscan.io/tx/${sendHash}`;
+            const explorerUrl = chainId === 11155111
+              ? `https://sepolia.etherscan.io/tx/${sendHash}`
+              : chainId === 1
+                ? `https://etherscan.io/tx/${sendHash}`
+                : chainId === 42161
+                  ? `https://arbiscan.io/tx/${sendHash}`
+                  : chainId === 10
+                    ? `https://optimistic.etherscan.io/tx/${sendHash}`
+                    : chainId === 8453
+                      ? `https://basescan.org/tx/${sendHash}`
+                      : chainId === 324
+                        ? `https://explorer.zksync.io/tx/${sendHash}`
+                        : `https://etherscan.io/tx/${sendHash}`; // fallback
             window.open(explorerUrl, "_blank");
           },
         },

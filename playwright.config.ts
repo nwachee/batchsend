@@ -66,9 +66,16 @@ export default defineConfig({
   ],
 
   /* Run your local dev server before starting the tests */
-  webServer: {
+ webServer: [
+  {
+    command: "anvil --load-state batchsend.json",
+    url: "http://127.0.0.1:8545",
+    reuseExistingServer: true,
+  },
+  {
     command: "pnpm dev",
     url: "http://localhost:3000",
     reuseExistingServer: true,
   },
+],
 });
